@@ -75,71 +75,10 @@
             (conj r [a b cost] [b a cost])))
         [])))
 
-(defn travel
-  "Given some nodes that have been visited, 'travel simultaneously
-  from all of them to whatever can now be reached. Return the seq of
-  distinct nodes reachable from everywhere you've been."
-  [visited-nodes graph]
-  (->> graph
-       (filter
-        #(-> % first visited-nodes))
-       (map second)
-       distinct))
-
 (defn graph->nodes
   "Extract the node names from the given 'graph, returning a 'set."
   [graph]
   (->> graph (mapcat #(take 2 %)) set))
-
-(defn connected-from?
-  "Determine if the given 'graph is connected (i.e., every node is
-  reachable) when starting from 'starting-node."
-  [graph starting-node]
-  (let [all-nodes (graph->nodes graph)]
-    (loop [graph graph
-           visited-nodes (hash-set starting-node)]
-      #_(println :graph (count graph) :visited-nodes visited-nodes :all-nodes all-nodes)
-      (if (= visited-nodes all-nodes)
-        true
-        (let [reachable-nodes (travel visited-nodes graph)
-              now-visited-nodes (into visited-nodes reachable-nodes)]
-          #_(println :reachable-nodes (set reachable-nodes))
-          #_(println :type-now-visited-nodes (type now-visited-nodes) :type-visited-nodes (type visited-nodes))
-          #_(prn :now-visited-nodes now-visited-nodes)
-          #_(prn :visited-nodes visited-nodes)
-          (if (not= now-visited-nodes visited-nodes)
-            (recur (filter #((complement now-visited-nodes) (first %)) graph)
-                   now-visited-nodes)
-            false))))))
-
-(defn connected?
-  "Testing every node that has an outgoing edge, return true if the
-  graph is connected from all points, and false if it is not connected
-  from any point. (We don't want to bother handling disconnected graphs.)"
-  [graph]
-  (let [all-starting-nodes (->> graph (map first) distinct)]
-    (loop [starting-node (first all-starting-nodes)
-           rest-start-nodes (rest all-starting-nodes)]
-      (cond
-        (connected-from? graph starting-node) true
-
-        (empty? (rest rest-start-nodes)) false
-
-        :default (recur (first rest-start-nodes) (rest rest-start-nodes))))))
-
-(defn generate-connected-graph
-  "Generate random graphs up to 'max-tries times, returning only when
-  we've given up, or when we've generated a connected graph."
-  [max-tries directed? connectivity-prob cost-min cost-max node-count]
-  (loop [attempt-counter 0]
-    (if (< attempt-counter max-tries)
-      (let [g (nodes->graph connectivity-prob cost-min cost-max (select-nodes node-count))
-            g (if directed? g (graph->undirected g))]
-        (if (connected? g)
-          g
-          (recur (inc attempt-counter))))
-      (do (println "ERROR: Failed to generate connected graph in" max-tries "tries")
-          nil))))
 
 (defn graph->map
   "Turn the given tuples graph into the same graph represented by a
@@ -184,25 +123,52 @@
   [graph-map path]
   (every? graph-map (map vec (partition 2 1 path))))
 
+(defn permute-all-potential-paths [graph]
+  (->> (graph->nodes graph)
+       combo/permutations))
+
+(defn find-all-paths [graph]
+  (let [all-potential-paths (permute-all-potential-paths graph)
+        graph-map (graph->map graph)
+        valid-paths (filter #(hops-valid? graph-map %) all-potential-paths)]
+    (println :valid-paths-count (count valid-paths))
+    valid-paths))
+
+(defn connected? [graph]
+  (let [all-potential-paths (permute-all-potential-paths graph)
+        graph-map (graph->map graph)]
+    (loop [potential-paths all-potential-paths]
+      (let [[path & paths] potential-paths]
+        (if (hops-valid? graph-map path)
+          true
+          (if paths
+            (recur paths)
+            false))))))
+
 (defn score-all-paths
   "Find all valid paths through the given 'graph, and score each
   one. How else will you know which one is best? Go, traveling
   salesperson, go!"
   [graph]
-  (let [all-nodes (graph->nodes graph)
-        all-paths (combo/permutations all-nodes)
-        all-scores (->> all-paths
-                        (filter #(hops-valid? (graph->map graph) %))
-                        (reduce
-                         (fn [r p]
-                           (assoc r p (score (graph->map graph) p)))
-                         {}))]
-    ;; I kind of like this printout, so I'm keeping it. It's fun to
-    ;; watch this go up as you increase the size of your graph and
-    ;; your nodes->graph 'prob... and if you increase much beyond 8
-    ;; nodes you're gonna need a bigger browser!
-    (println :scored-paths-count (count all-scores))
-    all-scores))
+  (->> (find-all-paths graph)
+       (reduce
+        (fn [r p]
+          (assoc r p (score (graph->map graph) p)))
+        {})))
+
+(defn generate-connected-graph
+  "Generate random graphs up to 'max-tries times, returning only when
+  we've given up, or when we've generated a connected graph."
+  [max-tries directed? connectivity-prob cost-min cost-max node-count]
+  (loop [attempt-counter 0]
+    (if (< attempt-counter max-tries)
+      (let [g (nodes->graph connectivity-prob cost-min cost-max (select-nodes node-count))
+            g (if directed? g (graph->undirected g))]
+        (if (connected? g)
+          g
+          (recur (inc attempt-counter))))
+      (do (println "ERROR: Failed to generate connected graph in" max-tries "tries")
+          nil))))
 
 (defn graph->shortest-path
   "Find the shortest path through the given 'graph, by adding up all
